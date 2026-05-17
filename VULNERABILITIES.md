@@ -1,42 +1,53 @@
-# Known Vulnerabilities
+# Known Vulnerabilities - Multi-Stage Build PoC
 
-This repository intentionally uses vulnerable dependencies for security testing purposes.
+This repository demonstrates a scenario where **default C2C correlation fails** 
+but **search_repositories can still find the vulnerable code**.
 
-## Base Image: node:14-alpine
+## Multi-Stage Build Architecture
 
-Node.js 14 reached End-of-Life on April 30, 2023. The base image contains multiple known CVEs:
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Stage 1: builder (node:14-alpine)                               │
+│   - Installs vulnerable dependencies                            │
+│   - lodash@4.17.20, express@4.17.1                              │
+│   - THIS STAGE IS NOT IN THE FINAL IMAGE                        │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              │ COPY --from=builder
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Stage 2: runtime (node:20-alpine)                               │
+│   - Different base image = different layer signatures           │
+│   - Still contains vulnerable node_modules                      │
+│   - DEFAULT C2C CANNOT CORRELATE (no matching layers)           │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-### Node.js CVEs
-- **CVE-2023-32002** - Permission Model bypass via Module._load (High)
-- **CVE-2023-32006** - Permission Model bypass via Module.constructor.prototype.require (High)
-- **CVE-2023-32559** - Permissions bypass via process.binding (High)
-- **CVE-2023-30590** - HTTP header manipulation vulnerability (Medium)
-- **CVE-2023-30589** - HTTP Request Smuggling (Medium)
-- **CVE-2023-30581** - mainModule.__proto__ bypass of experimental policy mechanism (High)
+## Why Default C2C Fails
 
-### Alpine Linux CVEs
-- **CVE-2022-48174** - BusyBox ash vulnerability (Critical)
-- **CVE-2023-42363** - Use-after-free in awk (Medium)
-- **CVE-2023-42364** - Use-after-free in awk (Medium)
-- **CVE-2023-42365** - Use-after-free in awk (Medium)
+1. **Layer Mismatch**: Final image has `node:20-alpine` base, not `node:14-alpine`
+2. **No CI/CD Trace**: Image built locally, no GitHub Actions pipeline
+3. **Docker Correlation Rule**: Can't match - Dockerfile says `node:14-alpine`, 
+   but deployed image has `node:20-alpine` layers
 
-## NPM Dependencies
+## How search_repositories Finds It
 
-### lodash 4.17.20
-- **CVE-2021-23337** - Command Injection in lodash (High)
-- **CVE-2020-28500** - Regular Expression Denial of Service (ReDoS) (Medium)
+Even though C2C fails, the Green Agent can use `search_repositories` to find:
 
-### express 4.17.1
-- **CVE-2024-29041** - Open redirect vulnerability (Medium)
-- **CVE-2022-24999** - Prototype pollution in qs (High)
+| Search Query | Finds |
+|--------------|-------|
+| `"lodash" "4.17.20" org:yali-gotllib` | package.json with vulnerable version |
+| `"express" "4.17.1" org:yali-gotllib` | package.json |
+| `"c2c-poc-app" filename:Dockerfile` | This Dockerfile |
+| `"node:14-alpine" filename:Dockerfile` | This Dockerfile (text match) |
 
-## Purpose
+## Vulnerabilities Still Present in Runtime Image
 
-These vulnerabilities are intentionally included for:
-1. Security scanner validation (Wiz C2C PoC)
-2. CI/CD pipeline security testing
-3. Developer training on vulnerability detection
+### NPM Dependencies (copied from builder)
+- **lodash@4.17.20**: CVE-2021-23337 (Command Injection), CVE-2020-28500
+- **express@4.17.1**: Multiple vulnerabilities
+- **qs@6.7.0**: CVE-2022-24999 (Prototype Pollution)
 
-## Warning
-
-DO NOT use this configuration in production environments.
+### Why They're Still Vulnerable
+The `COPY --from=builder /app/node_modules` copies the vulnerable packages
+to the runtime image, even though the base image is different.
