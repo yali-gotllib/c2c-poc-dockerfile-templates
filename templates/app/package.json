@@ -1,6 +1,8 @@
 {
   "name": "c2c-poc-app",
   "version": "1.0.0",
+  "description": "PoC app with vulnerable dependencies",
+  "main": "server.js",
   "dependencies": {
     "express": "4.17.1",
     "lodash": "4.17.20"
